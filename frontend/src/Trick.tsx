@@ -9,13 +9,14 @@ import ArrayUtils from "./util/array";
 interface IProps {
   players: IPlayer[];
   landlord?: number | null;
+  landlord_suffix: string;
   landlords_team?: number[];
   trick: ITrick;
   next?: number | null;
   name: string;
   showTrickInPlayerOrder: boolean;
 }
-const Trick = (props: IProps) => {
+const Trick = (props: IProps): JSX.Element => {
   const namesById = ArrayUtils.mapObject(props.players, (p: IPlayer) => [
     String(p.id),
     p.name,
@@ -37,20 +38,20 @@ const Trick = (props: IProps) => {
     playOrder.push(played.id);
     playedByID[played.id] = played;
     const m = props.trick.played_card_mappings[idx];
-    if (m && m.length > 0) {
+    if (m !== undefined && m !== null && m.length > 0) {
       // We should coalesce blocks of `Repeated` of count 1 together, since
       // that displays more nicely.
       const mapping: string[][] = [];
       const singles: string[] = [];
 
       m.forEach((mm) => {
-        if (mm.Repeated && mm.Repeated.count === 1) {
+        if (mm.Repeated !== undefined && mm.Repeated.count === 1) {
           singles.push(mm.Repeated.card.card);
-        } else if (mm.Repeated) {
+        } else if (mm.Repeated !== undefined) {
           mapping.push(
             ArrayUtils.range(mm.Repeated.count, (_) => mm.Repeated.card.card)
           );
-        } else if (mm.Tractor) {
+        } else if (mm.Tractor !== undefined) {
           mapping.push(
             mm.Tractor.members.flatMap((mmm) =>
               ArrayUtils.range(mm.Tractor.count, (_) => mmm.card)
@@ -75,7 +76,7 @@ const Trick = (props: IProps) => {
       {playOrder.map((id) => {
         const winning = props.trick.current_winner === id;
         const better = betterPlayer === id;
-        const cards = playedByID[id]?.cards || blankCards;
+        const cards = id in playedByID ? playedByID[id].cards : blankCards;
         const suffix = winning ? " (!)" : better ? " (-)" : "";
 
         const className = classNames(
@@ -95,7 +96,9 @@ const Trick = (props: IProps) => {
             key={id}
             id={id}
             label={
-              namesById[id] + (id === props.landlord ? " (当庄)" : "") + suffix
+              namesById[id] +
+              (id === props.landlord ? " " + props.landlord_suffix : "") +
+              suffix
             }
             className={className}
             groupedCards={cardsFromMappingByID[id]}

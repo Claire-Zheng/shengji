@@ -1,7 +1,7 @@
 import { State, combineState } from "../State";
 import { booleanLocalStorageState } from "../localStorageState";
 
-export type Settings = {
+export interface Settings {
   fourColor: boolean;
   showCardLabels: boolean;
   showLastTrick: boolean;
@@ -9,7 +9,8 @@ export type Settings = {
   reverseCardOrder: boolean;
   unsetAutoPlayWhenWinnerChanges: boolean;
   showTrickInPlayerOrder: boolean;
-};
+  separateBidCards: boolean;
+}
 
 const fourColor: State<boolean> = booleanLocalStorageState("four_color");
 const showCardLabels: State<boolean> = booleanLocalStorageState(
@@ -28,7 +29,9 @@ const unsetAutoPlayWhenWinnerChanges: State<boolean> = booleanLocalStorageState(
 const showTrickInPlayerOrder: State<boolean> = booleanLocalStorageState(
   "show_trick_in_player_order"
 );
-
+const separateBidCards: State<boolean> = booleanLocalStorageState(
+  "separate_bid_cards"
+);
 const settings: State<Settings> = combineState({
   fourColor,
   showCardLabels,
@@ -37,6 +40,7 @@ const settings: State<Settings> = combineState({
   reverseCardOrder,
   unsetAutoPlayWhenWinnerChanges,
   showTrickInPlayerOrder,
+  separateBidCards,
 });
 
 export default settings;

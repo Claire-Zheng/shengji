@@ -14,19 +14,19 @@ const Cell = styled.div`
   display: table-cell;
 `;
 
-type Props = {
+interface IProps {
   settings: Settings;
   onChangeSettings: (settings: Settings) => void;
-};
+}
 
-const SettingsPane = (props: Props) => {
+const SettingsPane = (props: IProps): JSX.Element => {
   const { settings } = props;
   const handleChange = (partialSettings: Partial<Settings>) => () =>
     props.onChangeSettings({ ...props.settings, ...partialSettings });
 
   const [link, setLink] = React.useState<string>("");
 
-  const setChatLink = (event: React.SyntheticEvent) => {
+  const setChatLink = (event: React.SyntheticEvent): void => {
     event.preventDefault();
     if (link.length > 0) {
       (window as any).send({ Action: { SetChatLink: link } });
@@ -138,6 +138,19 @@ const SettingsPane = (props: Props) => {
               checked={settings.showTrickInPlayerOrder}
               onChange={handleChange({
                 showTrickInPlayerOrder: !settings.showTrickInPlayerOrder,
+              })}
+            />
+          </Cell>
+        </Row>
+        <Row>
+          <LabelCell>separate bid cards in Draw stage</LabelCell>
+          <Cell>
+            <input
+              name="separate_bid_cards"
+              type="checkbox"
+              checked={settings.separateBidCards}
+              onChange={handleChange({
+                separateBidCards: !settings.separateBidCards,
               })}
             />
           </Cell>

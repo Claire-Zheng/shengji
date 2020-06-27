@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, Logger};
 
 use crate::game_state::{
-    AdvancementPolicy, FriendSelection, FriendSelectionPolicy, GameModeSettings, GameState,
-    InitializePhase, KittyBidPolicy, KittyPenalty, ThrowPenalty,
+    AdvancementPolicy, BidPolicy, FirstLandlordSelectionPolicy, FriendSelection,
+    FriendSelectionPolicy, GameModeSettings, GameState, InitializePhase, KittyBidPolicy,
+    KittyPenalty, ThrowPenalty,
 };
 use crate::message::MessageVariant;
 use crate::trick::{ThrowEvaluationPolicy, TrickDrawPolicy};
@@ -106,10 +107,32 @@ impl InteractiveGame {
                 info!(logger, "Setting friend selection policy"; "policy" => format!("{:?}", policy));
                 state.set_friend_selection_policy(policy)?
             }
+            (
+                Message::SetFirstLandlordSelectionPolicy(policy),
+                GameState::Initialize(ref mut state),
+            ) => {
+                info!(logger, "Setting first landlord selection policy"; "policy" => format!("{:?}", policy));
+                state.set_first_landlord_selection_policy(policy)?
+            }
+            (Message::SetBidPolicy(policy), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting bid selection policy"; "policy" => format!("{:?}", policy));
+                state.set_bid_policy(policy)?
+            }
             (Message::SetLandlord(landlord), GameState::Initialize(ref mut state)) => {
                 info!(logger, "Setting landlord"; "landlord" => landlord.map(|l| l.0));
                 state.set_landlord(landlord)?;
                 vec![MessageVariant::SetLandlord { landlord }]
+            }
+            (Message::SetLandlordEmoji(ref emoji), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting landlord emoji"; "emoji" => emoji);
+                state.set_landlord_emoji(emoji.clone())?;
+                vec![MessageVariant::SetLandlordEmoji {
+                    emoji: if let Some(a) = emoji {
+                        a.to_string()
+                    } else {
+                        "(当庄)".to_string()
+                    },
+                }]
             }
             (
                 Message::SetHideLandlordsPoints(hide_landlord_points),
@@ -258,11 +281,14 @@ pub enum Message {
     SetNumDecks(Option<usize>),
     SetKittySize(Option<usize>),
     SetFriendSelectionPolicy(FriendSelectionPolicy),
+    SetFirstLandlordSelectionPolicy(FirstLandlordSelectionPolicy),
+    SetBidPolicy(BidPolicy),
     SetHideLandlordsPoints(bool),
     SetHidePlayedCards(bool),
     ReorderPlayers(Vec<PlayerID>),
     SetRank(Number),
     SetLandlord(Option<PlayerID>),
+    SetLandlordEmoji(Option<String>),
     SetGameMode(GameModeSettings),
     SetAdvancementPolicy(AdvancementPolicy),
     SetKittyPenalty(KittyPenalty),
@@ -323,6 +349,10 @@ impl BroadcastMessage {
             KittySizeSet { size: None } => format!("{} set the number of cards in the bottom to default", n?),
             FriendSelectionPolicySet { policy: FriendSelectionPolicy::Unrestricted} => format!("{} allowed any non-trump card to be selected as a friend", n?),
             FriendSelectionPolicySet { policy: FriendSelectionPolicy::HighestCardNotAllowed} => format!("{} disallowed the highest non-trump card, as well as trump cards, from being selected as a friend", n?),
+            FirstLandlordSelectionPolicySet { policy: FirstLandlordSelectionPolicy::ByWinningBid} => format!("{} set winning bid to decide both landlord and trump", n?),
+            FirstLandlordSelectionPolicySet { policy: FirstLandlordSelectionPolicy::ByFirstBid} => format!("{} set first bid to decide landlord, winning bid to decide trump", n?),
+            BidPolicySet { policy: BidPolicy::JokerOrGreaterLength} => format!("{} allowed joker bids to outbid non-joker bids with the same number of cards", n?),
+            BidPolicySet { policy: BidPolicy::GreaterLength} => format!("{} required all bids to have more cards than the previous bids", n?),            
             NumDecksSet { num_decks: Some(num_decks) } => format!("{} set the number of decks to {}", n?, num_decks),
             NumDecksSet { num_decks: None } => format!("{} set the number of decks to default", n?),
             NumFriendsSet { num_friends: Some(num_friends) } => format!("{} set the number of friends to {}", n?, num_friends),
@@ -341,6 +371,7 @@ impl BroadcastMessage {
             SetCardVisibility { visible: false } => format!("{} hid the played cards from the chat", n?),
             SetLandlord { landlord: None } => format!("{} set the leader to the winner of the bid", n?),
             SetLandlord { landlord: Some(landlord) } => format!("{} set the leader to {}", n?, player_name(landlord)?),
+            SetLandlordEmoji { ref emoji } => format!("{} set landlord emoji to {}", n?, *emoji),
             SetRank { rank } => format!("{} set their rank to {}", n?, rank.as_str()),
             MadeBid { card, count } => format!("{} bid {} {:?}", n?, count, card),
             KittyPenaltySet { kitty_penalty: KittyPenalty::Times } => format!("{} set the penalty for points in the bottom to twice the size of the last trick", n?),
