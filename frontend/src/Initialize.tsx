@@ -1,6 +1,6 @@
 import * as React from "react";
 import ReactTooltip from "react-tooltip";
-import Picker, { IEmojiData } from "emoji-picker-react";
+import { IEmojiData } from "emoji-picker-react";
 import LandlordSelector from "./LandlordSelector";
 import NumDecksSelector from "./NumDecksSelector";
 import RankSelector from "./RankSelector";
@@ -11,6 +11,8 @@ import { WebsocketContext } from "./WebsocketProvider";
 
 import Header from "./Header";
 import Players from "./Players";
+
+const Picker = React.lazy(async () => await import("emoji-picker-react"));
 
 interface IProps {
   state: IInitializePhase;
@@ -119,6 +121,19 @@ const Initialize = (props: IProps): JSX.Element => {
     }
   };
 
+  const setKittyTheftPolicy = (
+    evt: React.ChangeEvent<HTMLSelectElement>
+  ): void => {
+    evt.preventDefault();
+    if (evt.target.value !== "") {
+      send({
+        Action: {
+          SetKittyTheftPolicy: evt.target.value,
+        },
+      });
+    }
+  };
+
   const setKittyPenalty = (evt: React.ChangeEvent<HTMLSelectElement>): void => {
     evt.preventDefault();
     if (evt.target.value !== "") {
@@ -175,6 +190,32 @@ const Initialize = (props: IProps): JSX.Element => {
     }
   };
 
+  const setPlayTakebackPolicy = (
+    evt: React.ChangeEvent<HTMLSelectElement>
+  ): void => {
+    evt.preventDefault();
+    if (evt.target.value !== "") {
+      send({
+        Action: {
+          SetPlayTakebackPolicy: evt.target.value,
+        },
+      });
+    }
+  };
+
+  const setBidTakebackPolicy = (
+    evt: React.ChangeEvent<HTMLSelectElement>
+  ): void => {
+    evt.preventDefault();
+    if (evt.target.value !== "") {
+      send({
+        Action: {
+          SetBidTakebackPolicy: evt.target.value,
+        },
+      });
+    }
+  };
+
   const setAdvancementPolicy = (
     evt: React.ChangeEvent<HTMLSelectElement>
   ): void => {
@@ -189,6 +230,25 @@ const Initialize = (props: IProps): JSX.Element => {
       send({
         Action: {
           SetAdvancementPolicy: "Unrestricted",
+        },
+      });
+    }
+  };
+
+  const setBonusLevelPolicy = (
+    evt: React.ChangeEvent<HTMLSelectElement>
+  ): void => {
+    evt.preventDefault();
+    if (evt.target.value !== "") {
+      send({
+        Action: {
+          SetBonusLevelPolicy: evt.target.value,
+        },
+      });
+    } else {
+      send({
+        Action: {
+          SetBonusLevelPolicy: "NoBonusLevel",
         },
       });
     }
@@ -362,6 +422,13 @@ const Initialize = (props: IProps): JSX.Element => {
               },
             });
             break;
+          case "kitty_theft_policy":
+            send({
+              Action: {
+                SetKittyTheftPolicy: value,
+              },
+            });
+            break;
           case "throw_penalty":
             send({
               Action: {
@@ -394,6 +461,27 @@ const Initialize = (props: IProps): JSX.Element => {
             send({
               Action: {
                 SetBidPolicy: value,
+              },
+            });
+            break;
+          case "bonus_level_policy":
+            send({
+              Action: {
+                SetBonusLevelPolicy: value,
+              },
+            });
+            break;
+          case "play_takeback_policy":
+            send({
+              Action: {
+                SetPlayTakebackPolicy: value,
+              },
+            });
+            break;
+          case "bid_takeback_policy":
+            send({
+              Action: {
+                SetBidTakebackPolicy: value,
               },
             });
             break;
@@ -533,130 +621,13 @@ const Initialize = (props: IProps): JSX.Element => {
         </div>
         <div>
           <label>
-            First Landlord Selection:{" "}
+            Bids after cards are exchanged from the bottom:{" "}
             <select
-              value={props.state.propagated.first_landlord_selection_policy}
-              onChange={setFirstLandlordSelectionPolicy}
+              value={props.state.propagated.kitty_theft_policy}
+              onChange={setKittyTheftPolicy}
             >
-              <option value="ByWinningBid">
-                Winning bid decides both landlord and trump
-              </option>
-              <option value="ByFirstBid">
-                First bid decides landlord, winning bid decides trump
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Bid Policy:{" "}
-            <select
-              value={props.state.propagated.bid_policy}
-              onChange={setBidPolicy}
-            >
-              <option value="JokerOrGreaterLength">
-                Joker bids to outbid non-joker bids with the same number of
-                cards
-              </option>
-              <option value="GreaterLength">
-                All bids must have more cards than the previous bids
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Friend Selection Restriction:{" "}
-            <select
-              value={props.state.propagated.friend_selection_policy}
-              onChange={setFriendSelectionPolicy}
-            >
-              <option value="Unrestricted">Non-trump cards</option>
-              <option value="HighestCardNotAllowed">
-                Non-trump cards, except the highest
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Point visibility:{" "}
-            <select
-              value={
-                props.state.propagated.hide_landlord_points ? "hide" : "show"
-              }
-              onChange={setHideLandlordsPoints}
-            >
-              <option value="show">Show all players&apos; points</option>
-              <option value="hide">Hide defending team&apos;s points</option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Played card visibility (in chat):{" "}
-            <select
-              value={props.state.propagated.hide_played_cards ? "hide" : "show"}
-              onChange={setHidePlayedCards}
-            >
-              <option value="show">Show played cards in chat</option>
-              <option value="hide">Hide played cards in chat</option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Rank advancement policy:{" "}
-            <select
-              value={props.state.propagated.advancement_policy}
-              onChange={setAdvancementPolicy}
-            >
-              <option value="Unrestricted">Unrestricted</option>
-              <option value="DefendPoints">
-                Points (5, 10, K) must be defended
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Trump policy for cards revealed from the bottom:{" "}
-            <select
-              value={props.state.propagated.kitty_bid_policy}
-              onChange={setKittyBidPolicy}
-            >
-              <option value="FirstCard">First card revealed</option>
-              <option value="FirstCardOfLevelOrHighest">
-                First card revealed of the appropriate rank
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Penalty for points left in the bottom:{" "}
-            <select
-              value={props.state.propagated.kitty_penalty}
-              onChange={setKittyPenalty}
-            >
-              <option value="Times">Twice the size of the last trick</option>
-              <option value="Power">
-                Two to the power of the size of the last trick
-              </option>
-            </select>
-          </label>
-        </div>
-        <div>
-          <label>
-            Penalty for incorrect throws:{" "}
-            <select
-              value={props.state.propagated.throw_penalty}
-              onChange={setThrowPenalty}
-            >
-              <option value="None">No penalty</option>
-              <option value="TenPointsPerAttempt">
-                Ten points per bad throw
-              </option>
+              <option value="AllowKittyTheft">Allowed (炒地皮)</option>
+              <option value="NoKittyTheft">Not allowed</option>
             </select>
           </label>
         </div>
@@ -692,7 +663,192 @@ const Initialize = (props: IProps): JSX.Element => {
         </div>
         <div>
           <label>
-            Landlord Emoji:{" "}
+            Trump policy for cards revealed from the bottom:{" "}
+            <select
+              value={props.state.propagated.kitty_bid_policy}
+              onChange={setKittyBidPolicy}
+            >
+              <option value="FirstCard">First card revealed</option>
+              <option value="FirstCardOfLevelOrHighest">
+                First card revealed of the appropriate rank
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Bid Policy:{" "}
+            <select
+              value={props.state.propagated.bid_policy}
+              onChange={setBidPolicy}
+            >
+              <option value="JokerOrGreaterLength">
+                Joker bids to outbid non-joker bids with the same number of
+                cards
+              </option>
+              <option value="GreaterLength">
+                All bids must have more cards than the previous bids
+              </option>
+            </select>
+          </label>
+        </div>
+        <h3>Continuation settings</h3>
+        <LandlordSelector
+          players={props.state.propagated.players}
+          landlordId={props.state.propagated.landlord}
+          onChange={(newLandlord: number | null) =>
+            send({ Action: { SetLandlord: newLandlord } })
+          }
+        />
+        <RankSelector
+          rank={currentPlayer.level}
+          onChangeRank={(newRank: string) =>
+            send({ Action: { SetRank: newRank } })
+          }
+        />
+        <h3>Difficulty and information settings</h3>
+        <div>
+          <label>
+            Friend selection restriction:{" "}
+            <select
+              value={props.state.propagated.friend_selection_policy}
+              onChange={setFriendSelectionPolicy}
+            >
+              <option value="Unrestricted">Non-trump cards</option>
+              <option value="HighestCardNotAllowed">
+                Non-trump cards, except the highest
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Rank advancement policy:{" "}
+            <select
+              value={props.state.propagated.advancement_policy}
+              onChange={setAdvancementPolicy}
+            >
+              <option value="Unrestricted">Unrestricted</option>
+              <option value="DefendPoints">
+                Points (5, 10, K) must be defended
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Point visibility:{" "}
+            <select
+              value={
+                props.state.propagated.hide_landlord_points ? "hide" : "show"
+              }
+              onChange={setHideLandlordsPoints}
+            >
+              <option value="show">Show all players&apos; points</option>
+              <option value="hide">Hide defending team&apos;s points</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Played card visibility (in chat):{" "}
+            <select
+              value={props.state.propagated.hide_played_cards ? "hide" : "show"}
+              onChange={setHidePlayedCards}
+            >
+              <option value="show">Show played cards in chat</option>
+              <option value="hide">Hide played cards in chat</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Penalty for points left in the bottom:{" "}
+            <select
+              value={props.state.propagated.kitty_penalty}
+              onChange={setKittyPenalty}
+            >
+              <option value="Times">Twice the size of the last trick</option>
+              <option value="Power">
+                Two to the power of the size of the last trick
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Penalty for incorrect throws:{" "}
+            <select
+              value={props.state.propagated.throw_penalty}
+              onChange={setThrowPenalty}
+            >
+              <option value="None">No penalty</option>
+              <option value="TenPointsPerAttempt">
+                Ten points per bad throw
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Play takeback:{" "}
+            <select
+              value={props.state.propagated.play_takeback_policy}
+              onChange={setPlayTakebackPolicy}
+            >
+              <option value="AllowPlayTakeback">Allow taking back plays</option>
+              <option value="NoPlayTakeback">Disallow taking back plays</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Bid takeback:{" "}
+            <select
+              value={props.state.propagated.bid_takeback_policy}
+              onChange={setBidTakebackPolicy}
+            >
+              <option value="AllowBidTakeback">Allow bid takeback</option>
+              <option value="NoBidTakeback">No bid takeback</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Small defending team bonus rank policy:{" "}
+            <select
+              value={props.state.propagated.bonus_level_policy}
+              onChange={setBonusLevelPolicy}
+            >
+              <option value="BonusLevelForSmallerLandlordTeam">
+                Bonus level for smaller defending team
+              </option>
+              <option value="NoBonusLevel">
+                No bonus level for defending team
+              </option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>
+            Landlord selection from bid:{" "}
+            <select
+              value={props.state.propagated.first_landlord_selection_policy}
+              onChange={setFirstLandlordSelectionPolicy}
+            >
+              <option value="ByWinningBid">
+                Winning bid decides both landlord and trump
+              </option>
+              <option value="ByFirstBid">
+                First bid decides landlord, winning bid decides trump
+              </option>
+            </select>
+          </label>
+        </div>
+        <h3>Misc settings</h3>
+        <div>
+          <label>
+            Landlord label:{" "}
             {props.state.propagated.landlord_emoji !== null &&
             props.state.propagated.landlord_emoji !== undefined &&
             props.state.propagated.landlord_emoji !== ""
@@ -715,7 +871,11 @@ const Initialize = (props: IProps): JSX.Element => {
             >
               Default
             </button>
-            {showPicker ? <Picker onEmojiClick={setEmoji} /> : null}
+            {showPicker ? (
+              <React.Suspense fallback={"..."}>
+                <Picker onEmojiClick={setEmoji} />
+              </React.Suspense>
+            ) : null}
           </label>
         </div>
         <div>
@@ -756,20 +916,6 @@ const Initialize = (props: IProps): JSX.Element => {
             </ReactTooltip>
           </label>
         </div>
-        <h3>Continuation settings</h3>
-        <LandlordSelector
-          players={props.state.propagated.players}
-          landlordId={props.state.propagated.landlord}
-          onChange={(newLandlord: number | null) =>
-            send({ Action: { SetLandlord: newLandlord } })
-          }
-        />
-        <RankSelector
-          rank={currentPlayer.level}
-          onChangeRank={(newRank: string) =>
-            send({ Action: { SetRank: newRank } })
-          }
-        />
       </div>
     </div>
   );

@@ -2,10 +2,11 @@ use anyhow::{bail, Error};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, Logger};
 
+use crate::bidding::{BidPolicy, BidTakebackPolicy};
 use crate::game_state::{
-    AdvancementPolicy, BidPolicy, FirstLandlordSelectionPolicy, FriendSelection,
+    AdvancementPolicy, BonusLevelPolicy, FirstLandlordSelectionPolicy, FriendSelection,
     FriendSelectionPolicy, GameModeSettings, GameState, InitializePhase, KittyBidPolicy,
-    KittyPenalty, ThrowPenalty,
+    KittyPenalty, KittyTheftPolicy, PlayTakebackPolicy, ThrowPenalty,
 };
 use crate::message::MessageVariant;
 use crate::trick::{ThrowEvaluationPolicy, TrickDrawPolicy};
@@ -171,6 +172,10 @@ impl InteractiveGame {
                 info!(logger, "Setting advancement policy"; "policy" => format!("{:?}", policy));
                 state.set_advancement_policy(policy)?
             }
+            (Message::SetBonusLevelPolicy(policy), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting bonus level policy"; "policy" => format!("{:?}", policy));
+                state.set_bonus_level_policy(policy)?
+            }
             (Message::SetThrowPenalty(throw_penalty), GameState::Initialize(ref mut state)) => {
                 info!(logger, "Setting throw penalty"; "penalty" => format!("{:?}", throw_penalty));
                 state.set_throw_penalty(throw_penalty)?
@@ -178,6 +183,18 @@ impl InteractiveGame {
             (Message::SetThrowEvaluationPolicy(policy), GameState::Initialize(ref mut state)) => {
                 info!(logger, "Setting throw evaluation policy"; "policy" => format!("{:?}", policy));
                 state.set_throw_evaluation_policy(policy)?
+            }
+            (Message::SetPlayTakebackPolicy(policy), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting play takeback policy"; "policy" => format!("{:?}", policy));
+                state.set_play_takeback_policy(policy)?
+            }
+            (Message::SetBidTakebackPolicy(policy), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting bid takeback policy"; "policy" => format!("{:?}", policy));
+                state.set_bid_takeback_policy(policy)?
+            }
+            (Message::SetKittyTheftPolicy(policy), GameState::Initialize(ref mut state)) => {
+                info!(logger, "Setting kitty theft policy"; "policy" => format!("{:?}", policy));
+                state.set_kitty_theft_policy(policy)?
             }
             (Message::DrawCard, GameState::Draw(ref mut state)) => {
                 debug!(logger, "Drawing card");
@@ -205,6 +222,29 @@ impl InteractiveGame {
                 info!(logger, "Entering exchange phase");
                 self.state = GameState::Exchange(state.advance(id)?);
                 vec![]
+            }
+            (Message::Bid(card, count), GameState::Exchange(ref mut state)) => {
+                info!(logger, "Making exchange bid");
+                if state.bid(id, card, count) {
+                    vec![MessageVariant::MadeBid { card, count }]
+                } else {
+                    bail!("bid was invalid")
+                }
+            }
+            (Message::TakeBackBid, GameState::Exchange(ref mut state)) => {
+                debug!(logger, "Taking back bid");
+                state.take_back_bid(id)?;
+                vec![MessageVariant::TookBackBid]
+            }
+            (Message::PickUpKitty, GameState::Exchange(ref mut state)) => {
+                info!(logger, "Picking up cards after over-bid");
+                state.pick_up_cards(id)?;
+                vec![MessageVariant::PickedUpCards]
+            }
+            (Message::PutDownKitty, GameState::Exchange(ref mut state)) => {
+                info!(logger, "Putting down cards after over-bid");
+                state.finalize(id)?;
+                vec![MessageVariant::PutDownCards]
             }
             (Message::MoveCardToKitty(card), GameState::Exchange(ref mut state)) => {
                 debug!(logger, "Moving card to kitty");
@@ -291,16 +331,21 @@ pub enum Message {
     SetLandlordEmoji(Option<String>),
     SetGameMode(GameModeSettings),
     SetAdvancementPolicy(AdvancementPolicy),
+    SetBonusLevelPolicy(BonusLevelPolicy),
     SetKittyPenalty(KittyPenalty),
     SetKittyBidPolicy(KittyBidPolicy),
     SetTrickDrawPolicy(TrickDrawPolicy),
     SetThrowPenalty(ThrowPenalty),
     SetThrowEvaluationPolicy(ThrowEvaluationPolicy),
+    SetPlayTakebackPolicy(PlayTakebackPolicy),
+    SetBidTakebackPolicy(BidTakebackPolicy),
+    SetKittyTheftPolicy(KittyTheftPolicy),
     StartGame,
     DrawCard,
     RevealCard,
     Bid(Card, usize),
     PickUpKitty,
+    PutDownKitty,
     MoveCardToKitty(Card),
     MoveCardToHand(Card),
     SetFriends(Vec<FriendSelection>),
@@ -345,6 +390,8 @@ impl BroadcastMessage {
             LeftGame { ref name } => format!("{} has left the game", name),
             AdvancementPolicySet { policy: AdvancementPolicy::Unrestricted } => format!("{} allowed players to bypass defending on points", n?),
             AdvancementPolicySet { policy: AdvancementPolicy::DefendPoints } => format!("{} required players to defend on points", n?),
+            BonusLevelPolicySet { policy: BonusLevelPolicy::NoBonusLevel } => format!("{} allowed no bonus level for landlord team", n?),
+            BonusLevelPolicySet { policy: BonusLevelPolicy::BonusLevelForSmallerLandlordTeam } => format!("{} allowed landlord team to get a bonus level for successfully defending its game with less than normal team size", n?),            
             KittySizeSet { size: Some(size) } => format!("{} set the number of cards in the bottom to {}", n?, size),
             KittySizeSet { size: None } => format!("{} set the number of cards in the bottom to default", n?),
             FriendSelectionPolicySet { policy: FriendSelectionPolicy::Unrestricted} => format!("{} allowed any non-trump card to be selected as a friend", n?),
@@ -385,8 +432,17 @@ impl BroadcastMessage {
                 protected longer tuples from being drawn out by shorter ones (pair does not draw triple)", n?),
             ThrowEvaluationPolicySet { policy: ThrowEvaluationPolicy::All } => format!("{} set throws to be evaluated based on all of the cards", n?),
             ThrowEvaluationPolicySet { policy: ThrowEvaluationPolicy::Highest } => format!("{} set throws to be evaluated based on the highest card", n?),
+            PlayTakebackPolicySet { policy: PlayTakebackPolicy::AllowPlayTakeback } => format!("{} allowed taking back plays", n?),
+            PlayTakebackPolicySet { policy: PlayTakebackPolicy::NoPlayTakeback } => format!("{} disallowed taking back plays", n?),
+            BidTakebackPolicySet { policy: BidTakebackPolicy::AllowBidTakeback } => format!("{} allowed taking back bids", n?),
+            BidTakebackPolicySet { policy: BidTakebackPolicy::NoBidTakeback } => format!("{} disallowed taking back bids", n?),            
+            KittyTheftPolicySet { policy: KittyTheftPolicy::AllowKittyTheft } => format!("{} allowed stealing the bottom cards after the leader", n?),
+            KittyTheftPolicySet { policy: KittyTheftPolicy::NoKittyTheft } => format!("{} disabled stealing the bottom cards after the leader", n?),
             RevealedCardFromKitty => format!("{} revealed a card from the bottom of the deck", n?),
-            GameFinished { result: _ } => "The game has finished.".to_string()
+            PickedUpCards => format!("{} picked up the bottom cards", n?),
+            PutDownCards => format!("{} put down the bottom cards", n?),
+            GameFinished { result: _ } => "The game has finished.".to_string(),
+            BonusLevelEarned => "Landlord team earned a bonus level for defending with a smaller team".to_string(),
         })
     }
 }

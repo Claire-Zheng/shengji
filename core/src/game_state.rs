@@ -6,6 +6,7 @@ use rand::{seq::SliceRandom, RngCore};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::bidding::{Bid, BidPolicy, BidTakebackPolicy};
 use crate::hands::Hands;
 use crate::message::MessageVariant;
 use crate::trick::{ThrowEvaluationPolicy, Trick, TrickDrawPolicy, TrickEnded};
@@ -123,18 +124,6 @@ impl Default for AdvancementPolicy {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum KittyBidPolicy {
-    FirstCard,
-    FirstCardOfLevelOrHighest,
-}
-
-impl Default for KittyBidPolicy {
-    fn default() -> Self {
-        KittyBidPolicy::FirstCard
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FriendSelectionPolicy {
     Unrestricted,
     HighestCardNotAllowed,
@@ -152,6 +141,18 @@ pub enum FirstLandlordSelectionPolicy {
     ByFirstBid,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum KittyBidPolicy {
+    FirstCard,
+    FirstCardOfLevelOrHighest,
+}
+
+impl Default for KittyBidPolicy {
+    fn default() -> Self {
+        KittyBidPolicy::FirstCard
+    }
+}
+
 impl Default for FirstLandlordSelectionPolicy {
     fn default() -> Self {
         FirstLandlordSelectionPolicy::ByWinningBid
@@ -159,14 +160,38 @@ impl Default for FirstLandlordSelectionPolicy {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum BidPolicy {
-    JokerOrGreaterLength,
-    GreaterLength,
+pub enum BonusLevelPolicy {
+    NoBonusLevel,
+    BonusLevelForSmallerLandlordTeam,
 }
 
-impl Default for BidPolicy {
+impl Default for BonusLevelPolicy {
     fn default() -> Self {
-        BidPolicy::JokerOrGreaterLength
+        BonusLevelPolicy::BonusLevelForSmallerLandlordTeam
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PlayTakebackPolicy {
+    AllowPlayTakeback,
+    NoPlayTakeback,
+}
+
+impl Default for PlayTakebackPolicy {
+    fn default() -> Self {
+        PlayTakebackPolicy::AllowPlayTakeback
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum KittyTheftPolicy {
+    AllowKittyTheft,
+    NoKittyTheft,
+}
+
+impl Default for KittyTheftPolicy {
+    fn default() -> Self {
+        KittyTheftPolicy::NoKittyTheft
     }
 }
 
@@ -199,6 +224,8 @@ pub struct PropagatedState {
     #[serde(default)]
     kitty_bid_policy: KittyBidPolicy,
     #[serde(default)]
+    kitty_theft_policy: KittyTheftPolicy,
+    #[serde(default)]
     trick_draw_policy: TrickDrawPolicy,
     #[serde(default)]
     throw_evaluation_policy: ThrowEvaluationPolicy,
@@ -206,6 +233,12 @@ pub struct PropagatedState {
     first_landlord_selection_policy: FirstLandlordSelectionPolicy,
     #[serde(default)]
     bid_policy: BidPolicy,
+    #[serde(default)]
+    bonus_level_policy: BonusLevelPolicy,
+    #[serde(default)]
+    play_takeback_policy: PlayTakebackPolicy,
+    #[serde(default)]
+    bid_takeback_policy: BidTakebackPolicy,
 }
 
 impl PropagatedState {
@@ -485,6 +518,30 @@ impl PropagatedState {
         }
     }
 
+    pub fn set_play_takeback_policy(
+        &mut self,
+        policy: PlayTakebackPolicy,
+    ) -> Result<Vec<MessageVariant>, Error> {
+        if policy != self.play_takeback_policy {
+            self.play_takeback_policy = policy;
+            Ok(vec![MessageVariant::PlayTakebackPolicySet { policy }])
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub fn set_bid_takeback_policy(
+        &mut self,
+        policy: BidTakebackPolicy,
+    ) -> Result<Vec<MessageVariant>, Error> {
+        if policy != self.bid_takeback_policy {
+            self.bid_takeback_policy = policy;
+            Ok(vec![MessageVariant::BidTakebackPolicySet { policy }])
+        } else {
+            Ok(vec![])
+        }
+    }
+
     pub fn set_advancement_policy(
         &mut self,
         policy: AdvancementPolicy,
@@ -492,6 +549,30 @@ impl PropagatedState {
         if policy != self.advancement_policy {
             self.advancement_policy = policy;
             Ok(vec![MessageVariant::AdvancementPolicySet { policy }])
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub fn set_bonus_level_policy(
+        &mut self,
+        policy: BonusLevelPolicy,
+    ) -> Result<Vec<MessageVariant>, Error> {
+        if policy != self.bonus_level_policy {
+            self.bonus_level_policy = policy;
+            Ok(vec![MessageVariant::BonusLevelPolicySet { policy }])
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub fn set_kitty_theft_policy(
+        &mut self,
+        policy: KittyTheftPolicy,
+    ) -> Result<Vec<MessageVariant>, Error> {
+        if policy != self.kitty_theft_policy {
+            self.kitty_theft_policy = policy;
+            Ok(vec![MessageVariant::KittyTheftPolicySet { policy }])
         } else {
             Ok(vec![])
         }
@@ -717,14 +798,18 @@ impl GameState {
                 ref mut hands,
                 ref mut kitty,
                 ref mut game_mode,
+                exchanger,
                 landlord,
+                finalized,
                 ..
             }) => {
                 hands.redact_except(id);
-                if id != landlord {
+                if id != exchanger.unwrap_or(landlord) || finalized {
                     for card in kitty {
                         *card = Card::Unknown;
                     }
+                }
+                if id != landlord {
                     if let GameMode::FindingFriends {
                         ref mut friends, ..
                     } = game_mode
@@ -741,6 +826,7 @@ impl GameState {
                 ref landlords_team,
                 ref propagated,
                 landlord,
+                exchanger,
                 ..
             }) => {
                 if propagated.hide_landlord_points {
@@ -753,7 +839,7 @@ impl GameState {
                 hands.redact_except(id);
                 // Don't redact at the end of the game.
                 let game_ongoing = !hands.is_empty() || !trick.played_cards().is_empty();
-                if game_ongoing && id != landlord {
+                if game_ongoing && id != exchanger.unwrap_or(landlord) {
                     for card in kitty {
                         *card = Card::Unknown;
                     }
@@ -795,6 +881,8 @@ pub struct PlayPhase {
     trump: Trump,
     trick: Trick,
     last_trick: Option<Trick>,
+    #[serde(default)]
+    exchanger: Option<PlayerID>,
 }
 
 impl PlayPhase {
@@ -852,6 +940,9 @@ impl PlayPhase {
     }
 
     pub fn take_back_cards(&mut self, id: PlayerID) -> Result<(), Error> {
+        if self.propagated.play_takeback_policy == PlayTakebackPolicy::NoPlayTakeback {
+            bail!("Taking back played cards is not allowed")
+        }
         Ok(self
             .trick
             .take_back(id, &mut self.hands, self.propagated.throw_evaluation_policy)?)
@@ -1060,8 +1151,31 @@ impl PlayPhase {
             }
         }
 
-        let (non_landlord_level_bump, landlord_level_bump, landlord_won) =
-            Self::compute_level_deltas(self.num_decks, non_landlords_points);
+        let mut smaller_landlord_team = false;
+
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = &self.game_mode
+        {
+            let actual_team_size: usize;
+            let setting_team_size = *num_friends + 1;
+
+            actual_team_size = self.landlords_team.len();
+            smaller_landlord_team = actual_team_size < setting_team_size;
+        }
+
+        let (non_landlord_level_bump, landlord_level_bump, landlord_won, bonus_level_earned) =
+            Self::compute_level_deltas(
+                self.num_decks,
+                non_landlords_points,
+                self.propagated.bonus_level_policy,
+                smaller_landlord_team,
+            );
+
+        if bonus_level_earned {
+            msgs.push(MessageVariant::BonusLevelEarned);
+        };
 
         let mut propagated = self.propagated.clone();
 
@@ -1109,27 +1223,42 @@ impl PlayPhase {
     pub fn compute_level_deltas(
         num_decks: usize,
         non_landlords_points: isize,
-    ) -> (usize, usize, bool) {
+        bonus_level_policy: BonusLevelPolicy,
+        smaller_landlord_team_size: bool,
+    ) -> (usize, usize, bool, bool) {
         let point_segments = (num_decks * 20) as isize;
         let landlord_won = non_landlords_points < 2 * point_segments;
+        let bonus_level;
+
+        if landlord_won
+            && bonus_level_policy == BonusLevelPolicy::BonusLevelForSmallerLandlordTeam
+            && smaller_landlord_team_size
+        {
+            bonus_level = 1;
+        } else {
+            bonus_level = 0;
+        };
 
         if landlord_won && non_landlords_points <= 0 {
             (
                 0,
-                (3 - non_landlords_points / point_segments) as usize,
+                bonus_level + ((3 - non_landlords_points / point_segments) as usize),
                 true,
+                bonus_level == 1,
             )
         } else if landlord_won {
             (
                 0,
-                (2 - non_landlords_points / point_segments) as usize,
+                bonus_level + ((2 - non_landlords_points / point_segments) as usize),
                 true,
+                bonus_level == 1,
             )
         } else {
             (
                 (non_landlords_points / point_segments - 2) as usize,
                 0,
                 false,
+                bonus_level == 1,
             )
         }
     }
@@ -1145,6 +1274,16 @@ pub struct ExchangePhase {
     kitty_size: usize,
     landlord: PlayerID,
     trump: Trump,
+    #[serde(default)]
+    exchanger: Option<PlayerID>,
+    #[serde(default)]
+    finalized: bool,
+    #[serde(default)]
+    epoch: usize,
+    #[serde(default)]
+    bids: Vec<Bid>,
+    #[serde(default)]
+    autobid: Option<Bid>,
 }
 
 impl ExchangePhase {
@@ -1157,21 +1296,29 @@ impl ExchangePhase {
     }
 
     pub fn move_card_to_kitty(&mut self, id: PlayerID, card: Card) -> Result<(), Error> {
-        if self.landlord != id {
-            bail!("not the landlord")
+        if self.exchanger.unwrap_or(self.landlord) != id {
+            bail!("not the exchanger")
         }
-        self.hands.remove(self.landlord, Some(card))?;
+        if self.finalized {
+            bail!("cards already finalized")
+        }
+        self.hands
+            .remove(self.exchanger.unwrap_or(self.landlord), Some(card))?;
         self.kitty.push(card);
         Ok(())
     }
 
     pub fn move_card_to_hand(&mut self, id: PlayerID, card: Card) -> Result<(), Error> {
-        if self.landlord != id {
-            bail!("not the landlord")
+        if self.exchanger.unwrap_or(self.landlord) != id {
+            bail!("not the exchanger")
+        }
+        if self.finalized {
+            bail!("cards already finalized")
         }
         if let Some(index) = self.kitty.iter().position(|c| *c == card) {
             self.kitty.swap_remove(index);
-            self.hands.add(self.landlord, Some(card))?;
+            self.hands
+                .add(self.exchanger.unwrap_or(self.landlord), Some(card))?;
             Ok(())
         } else {
             bail!("card not in the kitty")
@@ -1236,6 +1383,74 @@ impl ExchangePhase {
         }
     }
 
+    pub fn finalize(&mut self, id: PlayerID) -> Result<(), Error> {
+        if id != self.exchanger.unwrap_or(self.landlord) {
+            bail!("only the exchanger can finalize their cards")
+        }
+        if self.finalized {
+            bail!("Already finalized")
+        }
+        if self.kitty.len() != self.kitty_size {
+            bail!("incorrect number of cards in the bottom")
+        }
+        self.finalized = true;
+        Ok(())
+    }
+
+    pub fn pick_up_cards(&mut self, id: PlayerID) -> Result<(), Error> {
+        if !self.finalized {
+            bail!("Current exchanger is still exchanging cards!")
+        }
+        if self.autobid.is_some() {
+            bail!("Bid was automatically determined; no overbidding allowed")
+        }
+        if self.bids.last().map(|b| b.epoch) != Some(self.epoch) {
+            bail!("No bids have been made since the last player finished exchanging cards")
+        }
+        let (_, winning_bid) = Bid::first_and_winner(&self.bids, self.autobid)?;
+        if id != winning_bid.id {
+            bail!("Only the winner of the bid can pick up the cards")
+        }
+        self.finalized = false;
+        self.epoch += 1;
+        self.exchanger = Some(winning_bid.id);
+
+        Ok(())
+    }
+
+    pub fn bid(&mut self, id: PlayerID, card: Card, count: usize) -> bool {
+        if !self.finalized || self.autobid.is_some() {
+            return false;
+        }
+        Bid::bid(
+            id,
+            card,
+            count,
+            &mut self.bids,
+            self.autobid,
+            &self.hands,
+            &self.propagated.players,
+            self.propagated.landlord,
+            self.propagated.bid_policy,
+            self.epoch,
+        )
+    }
+
+    pub fn take_back_bid(&mut self, id: PlayerID) -> Result<(), Error> {
+        if !self.finalized {
+            bail!("Can't take back bid until exchanger is done swapping cards")
+        }
+        if self.autobid.is_some() {
+            bail!("Can't take back bid if the winning bid was automatic")
+        }
+        Bid::take_back_bid(
+            id,
+            self.propagated.bid_takeback_policy,
+            &mut self.bids,
+            self.epoch,
+        )
+    }
+
     pub fn advance(&self, id: PlayerID) -> Result<PlayPhase, Error> {
         if id != self.landlord {
             bail!("only the leader can advance the game")
@@ -1251,6 +1466,13 @@ impl ExchangePhase {
             if friends.len() != num_friends {
                 bail!("need to pick friends")
             }
+        }
+
+        if self.propagated.kitty_theft_policy == KittyTheftPolicy::AllowKittyTheft
+            && self.autobid.is_none()
+            && !self.finalized
+        {
+            bail!("must give other players a chance to over-bid and swap cards")
         }
 
         let landlord_position = bail_unwrap!(self
@@ -1303,6 +1525,7 @@ impl ExchangePhase {
             landlord: self.landlord,
             trump: self.trump,
             propagated: self.propagated.clone(),
+            exchanger: self.exchanger,
             landlords_team,
         })
     }
@@ -1315,13 +1538,6 @@ impl ExchangePhase {
 
         Ok((InitializePhase { propagated }, msgs))
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Bid {
-    id: PlayerID,
-    card: Card,
-    count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1396,12 +1612,22 @@ impl DrawPhase {
 
         match self.propagated.kitty_bid_policy {
             KittyBidPolicy::FirstCard => {
-                self.autobid = Some(Bid { count: 1, id, card });
+                self.autobid = Some(Bid {
+                    count: 1,
+                    id,
+                    card,
+                    epoch: 0,
+                });
             }
             KittyBidPolicy::FirstCardOfLevelOrHighest
                 if card.is_joker() || card.number() == Some(level) =>
             {
-                self.autobid = Some(Bid { count: 1, id, card });
+                self.autobid = Some(Bid {
+                    count: 1,
+                    id,
+                    card,
+                    epoch: 0,
+                });
             }
             KittyBidPolicy::FirstCardOfLevelOrHighest
                 if self.revealed_cards >= self.kitty.len() - 1 =>
@@ -1413,6 +1639,7 @@ impl DrawPhase {
                         count: 1,
                         id,
                         card: *highest_card,
+                        epoch: 0,
                     });
                 }
             }
@@ -1423,125 +1650,39 @@ impl DrawPhase {
         Ok(MessageVariant::RevealedCardFromKitty)
     }
 
-    #[allow(clippy::comparison_chain)]
-    pub fn valid_bids(&self, id: PlayerID) -> Result<Vec<Bid>, Error> {
-        // Compute all valid bids.
-        if self.bids.last().map(|b| b.id) == Some(id) {
-            // If we're the current highest bidder, the only permissible bid is
-            // one which is the same as the previous one, but has more cards
-            let last_bid = bail_unwrap!(self.bids.last());
-            let available = self
-                .hands
-                .counts(id)
-                .and_then(|c| c.get(&last_bid.card).cloned())
-                .unwrap_or(0);
-            Ok((last_bid.count + 1..=available)
-                .map(|count| Bid {
-                    card: last_bid.card,
-                    count,
-                    id,
-                })
-                .collect())
-        } else if let Some(counts) = self.hands.counts(id) {
-            // Construct all the valid bids from the player's hand
-            let mut valid_bids = vec![];
-            for (card, count) in counts {
-                let bid_player_id = self.propagated.landlord.unwrap_or(id);
-                let bid_level = self
-                    .propagated
-                    .players
-                    .iter()
-                    .find(|p| p.id == bid_player_id)
-                    .map(|p| p.rank());
-                if !card.is_joker() && card.number() != bid_level {
-                    continue;
-                }
-                for inner_count in 1..=*count {
-                    if card.is_joker() && inner_count == 1 {
-                        continue;
-                    }
-                    let new_bid = Bid {
-                        id,
-                        card: *card,
-                        count: inner_count,
-                    };
-                    if let Some(existing_bid) = self.bids.last() {
-                        if new_bid.count > existing_bid.count {
-                            valid_bids.push(new_bid);
-                        } else if new_bid.count == existing_bid.count {
-                            match (new_bid.card, existing_bid.card) {
-                                (Card::BigJoker, Card::BigJoker) => (),
-                                (Card::BigJoker, _) => {
-                                    if self.propagated.bid_policy == BidPolicy::JokerOrGreaterLength
-                                    {
-                                        valid_bids.push(new_bid)
-                                    }
-                                }
-                                (Card::SmallJoker, Card::BigJoker)
-                                | (Card::SmallJoker, Card::SmallJoker) => (),
-                                (Card::SmallJoker, _) => {
-                                    if self.propagated.bid_policy == BidPolicy::JokerOrGreaterLength
-                                    {
-                                        valid_bids.push(new_bid)
-                                    }
-                                }
-                                _ => (),
-                            }
-                        }
-                    } else {
-                        valid_bids.push(new_bid);
-                    }
-                }
-            }
-
-            Ok(valid_bids)
-        } else {
-            Ok(vec![])
-        }
-    }
-
     pub fn bid(&mut self, id: PlayerID, card: Card, count: usize) -> bool {
         if self.revealed_cards > 0 {
             return false;
         }
-        let new_bid = Bid { id, card, count };
-        if self
-            .valid_bids(id)
-            .map(|b| b.contains(&new_bid))
-            .unwrap_or(false)
-        {
-            self.bids.push(new_bid);
-            true
-        } else {
-            false
-        }
+        Bid::bid(
+            id,
+            card,
+            count,
+            &mut self.bids,
+            self.autobid,
+            &self.hands,
+            &self.propagated.players,
+            self.propagated.landlord,
+            self.propagated.bid_policy,
+            0,
+        )
     }
 
     pub fn take_back_bid(&mut self, id: PlayerID) -> Result<(), Error> {
-        if self.bids.last().map(|b| b.id) == Some(id) {
-            self.bids.pop();
-            Ok(())
-        } else {
-            bail!("Can't do that right now")
-        }
+        Bid::take_back_bid(id, self.propagated.bid_takeback_policy, &mut self.bids, 0)
     }
 
     pub fn advance(&self, id: PlayerID) -> Result<ExchangePhase, Error> {
         if !self.deck.is_empty() {
             bail!("deck has cards remaining")
-        } else if self.bids.is_empty() && self.autobid.is_none() {
-            bail!("nobody has bid yet")
         } else {
-            let winning_bid = bail_unwrap!(self.autobid.or_else(|| self.bids.last().copied()));
-            let first_bid = bail_unwrap!(self.autobid.or_else(|| self.bids.first().copied()));
-            let landlord = match self.propagated.first_landlord_selection_policy {
-                FirstLandlordSelectionPolicy::ByWinningBid => {
-                    self.propagated.landlord.unwrap_or(winning_bid.id)
+            let (first_bid, winning_bid) = Bid::first_and_winner(&self.bids, self.autobid)?;
+            let landlord = self.propagated.landlord.unwrap_or_else(|| {
+                match self.propagated.first_landlord_selection_policy {
+                    FirstLandlordSelectionPolicy::ByWinningBid => winning_bid.id,
+                    FirstLandlordSelectionPolicy::ByFirstBid => first_bid.id,
                 }
-                FirstLandlordSelectionPolicy::ByFirstBid => {
-                    self.propagated.landlord.unwrap_or(first_bid.id)
-                }
-            };
+            });
 
             if id != landlord {
                 bail!("only the leader can advance the game");
@@ -1574,6 +1715,11 @@ impl DrawPhase {
                 landlord,
                 hands,
                 trump,
+                exchanger: None,
+                finalized: false,
+                epoch: 1,
+                bids: self.bids.clone(),
+                autobid: self.autobid,
             })
         }
     }
@@ -1705,30 +1851,114 @@ impl DerefMut for InitializePhase {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdvancementPolicy, InitializePhase, PlayPhase, Player};
+    use super::{
+        AdvancementPolicy, BonusLevelPolicy, FriendSelection, GameMode, GameModeSettings,
+        InitializePhase, KittyTheftPolicy, MessageVariant, PlayPhase, Player,
+    };
 
     use crate::types::{cards, Card, Number, PlayerID};
 
     #[test]
     fn test_level_deltas() {
-        assert_eq!(PlayPhase::compute_level_deltas(2, -80), (0, 5, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, -40), (0, 4, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, -35), (0, 3, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 0), (0, 3, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 5), (0, 2, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 35), (0, 2, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 40), (0, 1, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 75), (0, 1, true));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 80), (0, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 115), (0, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 120), (1, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 155), (1, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 160), (2, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 195), (2, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 200), (3, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 235), (3, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 240), (4, 0, false));
-        assert_eq!(PlayPhase::compute_level_deltas(2, 280), (5, 0, false));
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, -80, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 5, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, -40, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 4, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, -35, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 3, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 0, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 3, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 5, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 2, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 35, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 2, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 40, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 1, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 75, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 1, true, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 80, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 115, BonusLevelPolicy::NoBonusLevel, false),
+            (0, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 120, BonusLevelPolicy::NoBonusLevel, false),
+            (1, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 155, BonusLevelPolicy::NoBonusLevel, false),
+            (1, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 160, BonusLevelPolicy::NoBonusLevel, false),
+            (2, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 195, BonusLevelPolicy::NoBonusLevel, false),
+            (2, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 200, BonusLevelPolicy::NoBonusLevel, false),
+            (3, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 235, BonusLevelPolicy::NoBonusLevel, false),
+            (3, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 240, BonusLevelPolicy::NoBonusLevel, false),
+            (4, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(2, 280, BonusLevelPolicy::NoBonusLevel, false),
+            (5, 0, false, false)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(
+                2,
+                0,
+                BonusLevelPolicy::BonusLevelForSmallerLandlordTeam,
+                true
+            ),
+            (0, 4, true, true)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(
+                3,
+                0,
+                BonusLevelPolicy::BonusLevelForSmallerLandlordTeam,
+                true
+            ),
+            (0, 4, true, true)
+        );
+        assert_eq!(
+            PlayPhase::compute_level_deltas(
+                3,
+                50,
+                BonusLevelPolicy::BonusLevelForSmallerLandlordTeam,
+                true
+            ),
+            (0, 3, true, true)
+        );
     }
 
     #[test]
@@ -1847,6 +2077,53 @@ mod tests {
     }
 
     #[test]
+    fn test_kitty_stealing_bid_sequence() {
+        let mut init = InitializePhase::new();
+        let p1 = init.add_player("p1".into()).unwrap().0;
+        let p2 = init.add_player("p2".into()).unwrap().0;
+        let p3 = init.add_player("p3".into()).unwrap().0;
+        let p4 = init.add_player("p4".into()).unwrap().0;
+        init.set_kitty_theft_policy(KittyTheftPolicy::AllowKittyTheft)
+            .unwrap();
+        let mut draw = init.start().unwrap();
+        // Hackily ensure that everyone can bid.
+        draw.deck = vec![
+            cards::S_2,
+            Card::SmallJoker,
+            Card::BigJoker,
+            cards::H_2,
+            cards::S_2,
+            Card::SmallJoker,
+            Card::BigJoker,
+            cards::H_2,
+        ];
+        draw.position = 0;
+
+        draw.draw_card(p1).unwrap();
+        draw.draw_card(p2).unwrap();
+        draw.draw_card(p3).unwrap();
+        draw.draw_card(p4).unwrap();
+        draw.draw_card(p1).unwrap();
+        draw.draw_card(p2).unwrap();
+        draw.draw_card(p3).unwrap();
+        draw.draw_card(p4).unwrap();
+
+        assert!(draw.bid(p1, cards::H_2, 1));
+        let mut exchange = draw.advance(p1).unwrap();
+        exchange.finalize(p1).unwrap();
+        assert!(exchange.bid(p1, cards::H_2, 2));
+        assert!(exchange.bid(p3, Card::SmallJoker, 2));
+        exchange.pick_up_cards(p3).unwrap();
+        exchange.advance(p1).unwrap_err();
+        exchange.finalize(p3).unwrap();
+        assert!(exchange.bid(p2, Card::BigJoker, 2));
+        exchange.pick_up_cards(p2).unwrap();
+        exchange.finalize(p2).unwrap();
+        assert!(!exchange.bid(p1, cards::H_2, 2));
+        exchange.advance(p1).unwrap();
+    }
+
+    #[test]
     fn test_tuple_protection_case() {
         use cards::*;
 
@@ -1890,5 +2167,715 @@ mod tests {
         play.play_cards(p2, &[S_3, S_3, S_5, S_5, S_7]).unwrap();
         play.play_cards(p3, &[S_3, S_5, S_10, S_J, S_Q]).unwrap();
         play.play_cards(p4, &[S_6, S_6, S_6, C_8, C_9]).unwrap();
+    }
+
+    #[test]
+    fn test_full_game_play() {
+        use cards::*;
+
+        let mut init = InitializePhase::new();
+
+        init.set_game_mode(GameModeSettings::FindingFriends {
+            num_friends: Option::None,
+        })
+        .unwrap();
+        let p1 = init.add_player("p1".into()).unwrap().0;
+        let p2 = init.add_player("p2".into()).unwrap().0;
+        let p3 = init.add_player("p3".into()).unwrap().0;
+        let p4 = init.add_player("p4".into()).unwrap().0;
+        let p5 = init.add_player("p5".into()).unwrap().0;
+        let p6 = init.add_player("p6".into()).unwrap().0;
+
+        init.set_landlord(Some(p2)).unwrap();
+        init.set_rank(p2, Number::Seven).unwrap();
+
+        let mut draw = init.start().unwrap();
+
+        let p1_hand = vec![
+            Card::SmallJoker,
+            D_7,
+            D_7,
+            H_7,
+            H_K,
+            H_9,
+            H_9,
+            H_4,
+            H_3,
+            S_A,
+            S_Q,
+            S_Q,
+            S_9,
+            S_9,
+            S_8,
+            S_5,
+            D_K,
+            D_8,
+            D_6,
+            D_5,
+            D_4,
+            C_K,
+            C_K,
+            C_J,
+            C_9,
+            C_8,
+        ];
+        let p2_hand = vec![
+            Card::BigJoker,
+            Card::BigJoker,
+            C_7,
+            C_7,
+            S_7,
+            H_K,
+            H_K,
+            H_6,
+            H_4,
+            H_3,
+            S_K,
+            S_J,
+            S_4,
+            S_3,
+            S_2,
+            D_K,
+            D_10,
+            D_4,
+            D_4,
+            D_2,
+            D_2,
+            C_K,
+            C_9,
+            C_5,
+            C_4,
+            C_3,
+        ];
+        let p3_hand = vec![
+            Card::SmallJoker,
+            S_7,
+            H_A,
+            H_10,
+            H_10,
+            H_8,
+            H_8,
+            H_5,
+            H_5,
+            H_2,
+            S_10,
+            S_8,
+            S_5,
+            S_3,
+            D_A,
+            D_J,
+            D_8,
+            D_6,
+            D_5,
+            C_A,
+            C_J,
+            C_10,
+            C_6,
+            C_5,
+            C_5,
+            C_2,
+        ];
+        let p4_hand = vec![
+            H_7, S_7, H_Q, H_Q, H_J, H_J, H_8, S_K, S_J, S_10, S_10, S_6, S_2, D_Q, D_8, D_5, D_3,
+            D_2, C_A, C_Q, C_J, C_9, C_8, C_6, C_2, C_2,
+        ];
+        let p5_hand = vec![
+            Card::SmallJoker,
+            D_7,
+            H_A,
+            H_9,
+            H_6,
+            H_3,
+            H_2,
+            H_2,
+            S_K,
+            S_6,
+            S_6,
+            S_5,
+            S_4,
+            S_2,
+            D_Q,
+            D_J,
+            D_J,
+            D_10,
+            D_9,
+            D_9,
+            D_3,
+            D_3,
+            C_Q,
+            C_10,
+            C_3,
+            C_3,
+        ];
+        let p6_hand = vec![
+            Card::BigJoker,
+            H_7,
+            H_A,
+            H_Q,
+            H_10,
+            H_6,
+            H_5,
+            H_4,
+            S_A,
+            S_A,
+            S_Q,
+            S_J,
+            S_8,
+            S_4,
+            S_3,
+            D_A,
+            D_A,
+            D_K,
+            D_Q,
+            D_10,
+            D_9,
+            C_A,
+            C_8,
+            C_6,
+            C_4,
+            C_4,
+        ];
+
+        assert_eq!(p1_hand.len(), 26);
+        assert_eq!(p2_hand.len(), 26);
+        assert_eq!(p3_hand.len(), 26);
+        assert_eq!(p4_hand.len(), 26);
+        assert_eq!(p5_hand.len(), 26);
+        assert_eq!(p6_hand.len(), 26);
+
+        let mut deck = vec![];
+        for i in 0..26 {
+            deck.push(p1_hand[i]);
+            deck.push(p2_hand[i]);
+            deck.push(p3_hand[i]);
+            deck.push(p4_hand[i]);
+            deck.push(p5_hand[i]);
+            deck.push(p6_hand[i]);
+        }
+        deck.reverse();
+        draw.deck = deck;
+        draw.position = 0;
+
+        for _ in 0..26 {
+            draw.draw_card(p1).unwrap();
+            draw.draw_card(p2).unwrap();
+            draw.draw_card(p3).unwrap();
+            draw.draw_card(p4).unwrap();
+            draw.draw_card(p5).unwrap();
+            draw.draw_card(p6).unwrap();
+        }
+
+        draw.kitty = vec![C_7, S_9, D_6, D_J, C_Q, C_10];
+
+        assert!(draw.bid(p1, D_7, 2));
+
+        let mut exchange = draw.advance(p2).unwrap();
+        let friends = vec![
+            FriendSelection {
+                card: C_K,
+                initial_skip: 0,
+            },
+            FriendSelection {
+                card: H_K,
+                initial_skip: 0,
+            },
+        ];
+        exchange.set_friends(p2, friends).unwrap();
+        let mut play = exchange.advance(p2).unwrap();
+
+        assert_eq!(play.landlords_team.len(), 1);
+
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p2, &[H_K, H_K]).unwrap();
+        play.play_cards(p3, &[H_8, H_8]).unwrap();
+        play.play_cards(p4, &[H_J, H_J]).unwrap();
+        play.play_cards(p5, &[H_2, H_2]).unwrap();
+        play.play_cards(p6, &[H_4, H_5]).unwrap();
+        play.play_cards(p1, &[H_9, H_9]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 1);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p2, &[C_3]).unwrap();
+        play.play_cards(p3, &[C_6]).unwrap();
+        play.play_cards(p4, &[C_6]).unwrap();
+        play.play_cards(p5, &[C_10]).unwrap();
+        play.play_cards(p6, &[C_6]).unwrap();
+        play.play_cards(p1, &[C_K]).unwrap();
+        play.finish_trick().unwrap();
+
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p1, &[S_A]).unwrap();
+        play.play_cards(p2, &[S_2]).unwrap();
+        play.play_cards(p3, &[S_3]).unwrap();
+        play.play_cards(p4, &[S_2]).unwrap();
+        play.play_cards(p5, &[S_2]).unwrap();
+        play.play_cards(p6, &[S_3]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p1, &[S_Q, S_Q]).unwrap();
+        play.play_cards(p2, &[S_3, S_4]).unwrap();
+        play.play_cards(p3, &[S_5, S_8]).unwrap();
+        play.play_cards(p4, &[S_10, S_10]).unwrap();
+        play.play_cards(p5, &[S_6, S_6]).unwrap();
+        play.play_cards(p6, &[S_A, S_A]).unwrap();
+        play.finish_trick().unwrap();
+
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p6, &[Card::BigJoker]).unwrap();
+        play.play_cards(p1, &[D_4]).unwrap();
+        play.play_cards(p2, &[S_7]).unwrap();
+        play.play_cards(p3, &[D_5]).unwrap();
+        play.play_cards(p4, &[D_5]).unwrap();
+        play.play_cards(p5, &[D_10]).unwrap();
+        play.finish_trick().unwrap();
+
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p6, &[D_A, D_A]).unwrap();
+        play.play_cards(p1, &[D_7, D_7]).unwrap();
+        play.play_cards(p2, &[D_2, D_2]).unwrap();
+        play.play_cards(p3, &[D_6, D_8]).unwrap();
+        play.play_cards(p4, &[D_2, D_3]).unwrap();
+        play.play_cards(p5, &[D_3, D_3]).unwrap();
+        play.finish_trick().unwrap();
+
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p1, &[S_9, S_9]).unwrap();
+        play.play_cards(p2, &[S_J, S_K]).unwrap();
+        play.play_cards(p3, &[S_10, H_2]).unwrap();
+        play.play_cards(p4, &[S_6, S_J]).unwrap();
+        play.play_cards(p5, &[S_4, S_5]).unwrap();
+        play.play_cards(p6, &[S_4, S_8]).unwrap();
+        play.finish_trick().unwrap();
+
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p1, &[S_5]).unwrap();
+        play.play_cards(p2, &[D_10]).unwrap();
+        play.play_cards(p3, &[C_2]).unwrap();
+        play.play_cards(p4, &[S_K]).unwrap();
+        play.play_cards(p5, &[S_K]).unwrap();
+        play.play_cards(p6, &[S_J]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p2, &[Card::BigJoker, Card::BigJoker])
+            .unwrap();
+        play.play_cards(p3, &[D_J, D_A]).unwrap();
+        play.play_cards(p4, &[D_8, D_Q]).unwrap();
+        play.play_cards(p5, &[D_9, D_9]).unwrap();
+        play.play_cards(p6, &[D_9, D_10]).unwrap();
+        play.play_cards(p1, &[D_5, D_K]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        play.play_cards(p2, &[C_7, C_7]).unwrap();
+        play.play_cards(p3, &[S_7, Card::SmallJoker]).unwrap();
+        play.play_cards(p4, &[S_7, H_7]).unwrap();
+        play.play_cards(p5, &[D_J, D_J]).unwrap();
+        play.play_cards(p6, &[D_Q, D_K]).unwrap();
+        play.play_cards(p1, &[D_6, D_8]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        play.play_cards(p2, &[D_4, D_4]).unwrap();
+        play.play_cards(p3, &[C_10, C_J]).unwrap();
+        play.play_cards(p4, &[C_8, C_9]).unwrap();
+        play.play_cards(p5, &[D_Q, D_7]).unwrap();
+        play.play_cards(p6, &[C_8, H_7]).unwrap();
+        play.play_cards(p1, &[H_7, Card::SmallJoker]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        play.play_cards(p2, &[H_3]).unwrap();
+        play.play_cards(p3, &[H_A]).unwrap();
+        play.play_cards(p4, &[H_8]).unwrap();
+        play.play_cards(p5, &[H_3]).unwrap();
+        play.play_cards(p6, &[H_6]).unwrap();
+        play.play_cards(p1, &[H_3]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p3, &[H_10, H_10]).unwrap();
+        play.play_cards(p4, &[H_Q, H_Q]).unwrap();
+        play.play_cards(p5, &[H_6, H_9]).unwrap();
+        play.play_cards(p6, &[H_10, H_Q]).unwrap();
+        play.play_cards(p1, &[H_4, H_K]).unwrap();
+        play.play_cards(p2, &[H_4, H_6]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p4, &[C_2]).unwrap();
+        play.play_cards(p5, &[C_3]).unwrap();
+        play.play_cards(p6, &[C_4]).unwrap();
+        play.play_cards(p1, &[C_K]).unwrap();
+        play.play_cards(p2, &[C_K]).unwrap();
+        play.play_cards(p3, &[C_5]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p1, &[S_8]).unwrap();
+        play.play_cards(p2, &[C_4]).unwrap();
+        play.play_cards(p3, &[C_A]).unwrap();
+        play.play_cards(p4, &[C_A]).unwrap();
+        play.play_cards(p5, &[C_3]).unwrap();
+        play.play_cards(p6, &[S_Q]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        play.play_cards(p6, &[C_4]).unwrap();
+        play.play_cards(p1, &[C_8]).unwrap();
+        play.play_cards(p2, &[C_9]).unwrap();
+        play.play_cards(p3, &[C_5]).unwrap();
+        play.play_cards(p4, &[C_2]).unwrap();
+        play.play_cards(p5, &[C_Q]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+
+        play.play_cards(p5, &[H_A]).unwrap();
+        play.play_cards(p6, &[H_A]).unwrap();
+        play.play_cards(p1, &[C_9]).unwrap();
+        play.play_cards(p2, &[C_5]).unwrap();
+        play.play_cards(p3, &[H_5]).unwrap();
+        play.play_cards(p4, &[C_J]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        play.play_cards(p5, &[Card::SmallJoker]).unwrap();
+        play.play_cards(p6, &[C_A]).unwrap();
+        play.play_cards(p1, &[C_J]).unwrap();
+        play.play_cards(p2, &[D_K]).unwrap();
+        play.play_cards(p3, &[H_5]).unwrap();
+        play.play_cards(p4, &[C_Q]).unwrap();
+        play.finish_trick().unwrap();
+        assert_eq!(play.landlords_team.len(), 2);
+        if let GameMode::FindingFriends {
+            num_friends,
+            friends: _,
+        } = play.game_mode
+        {
+            assert_eq!(num_friends, 2);
+        }
+        if let Ok((phase, _msgs)) = play.finish_game() {
+            assert_eq!(phase.propagated.landlord, Some(p3));
+        };
+    }
+
+    #[test]
+    fn test_landlord_small_team() {
+        let mut init = InitializePhase::new();
+        init.set_game_mode(GameModeSettings::FindingFriends {
+            num_friends: Some(3),
+        })
+        .unwrap();
+        let p1 = init.add_player("p1".into()).unwrap().0;
+        let p2 = init.add_player("p2".into()).unwrap().0;
+        let p3 = init.add_player("p3".into()).unwrap().0;
+        let p4 = init.add_player("p4".into()).unwrap().0;
+        let p5 = init.add_player("p5".into()).unwrap().0;
+        let p6 = init.add_player("p6".into()).unwrap().0;
+        let p7 = init.add_player("p7".into()).unwrap().0;
+        let p8 = init.add_player("p8".into()).unwrap().0;
+
+        init.set_landlord(Some(p1)).unwrap();
+        init.set_rank(p1, Number::Seven).unwrap();
+
+        let mut draw = init.start().unwrap();
+        let mut deck = vec![];
+
+        // We need at least two cards per person, since the landlord needs to
+        // bid, and the biddable card can't be the friend-selection card.
+        let p1_hand = vec![cards::S_7, cards::D_3];
+        let p2_hand = vec![cards::D_4, cards::D_5];
+        let p3_hand = vec![cards::C_6, cards::C_8];
+        let p4_hand = vec![cards::C_9, cards::C_10];
+        let p5_hand = vec![cards::C_J, cards::C_Q];
+        let p6_hand = vec![cards::C_K, cards::C_A];
+        let p7_hand = vec![cards::H_2, cards::H_3];
+        let p8_hand = vec![cards::H_4, cards::H_5];
+
+        // Set up the deck to have the appropriate cards.
+        for i in 0..2 {
+            deck.push(p1_hand[i]);
+            deck.push(p2_hand[i]);
+            deck.push(p3_hand[i]);
+            deck.push(p4_hand[i]);
+            deck.push(p5_hand[i]);
+            deck.push(p6_hand[i]);
+            deck.push(p7_hand[i]);
+            deck.push(p8_hand[i]);
+        }
+        deck.reverse();
+        draw.deck = deck;
+        draw.position = 0;
+
+        // Draw the deck
+        for _ in 0..2 {
+            draw.draw_card(p1).unwrap();
+            draw.draw_card(p2).unwrap();
+            draw.draw_card(p3).unwrap();
+            draw.draw_card(p4).unwrap();
+            draw.draw_card(p5).unwrap();
+            draw.draw_card(p6).unwrap();
+            draw.draw_card(p7).unwrap();
+            draw.draw_card(p8).unwrap();
+        }
+
+        // p1 bids and wins, trump is now Spades and 7s.
+        assert!(draw.bid(p1, cards::S_7, 1));
+
+        let mut exchange = draw.advance(p1).unwrap();
+        let friends = vec![
+            FriendSelection {
+                card: cards::D_3,
+                initial_skip: 0,
+            },
+            FriendSelection {
+                card: cards::D_4,
+                initial_skip: 0,
+            },
+            FriendSelection {
+                card: cards::D_5,
+                initial_skip: 0,
+            },
+        ];
+        exchange.set_friends(p1, friends).unwrap();
+        let mut play = exchange.advance(p1).unwrap();
+        match play.game_mode {
+            GameMode::FindingFriends { num_friends: 3, .. } => (),
+            _ => panic!("Didn't have 3 friends once game was started"),
+        }
+
+        assert_eq!(
+            play.landlords_team,
+            vec![p1],
+            "Nobody should have joined the team yet"
+        );
+
+        // Play the first hand. P2 will join the team.
+        play.play_cards(p1, &p1_hand[..1]).unwrap();
+        play.play_cards(p2, &p2_hand[..1]).unwrap();
+        play.play_cards(p3, &p3_hand[..1]).unwrap();
+        play.play_cards(p4, &p4_hand[..1]).unwrap();
+        play.play_cards(p5, &p5_hand[..1]).unwrap();
+        play.play_cards(p6, &p6_hand[..1]).unwrap();
+        play.play_cards(p7, &p7_hand[..1]).unwrap();
+        play.play_cards(p8, &p8_hand[..1]).unwrap();
+
+        // Check that P2 actually joined the team.
+        let msgs = play.finish_trick().unwrap();
+        assert_eq!(
+            msgs.into_iter()
+                .filter(|m| match m {
+                    MessageVariant::JoinedTeam { player } if *player == p2 => true,
+                    _ => false,
+                })
+                .count(),
+            1
+        );
+
+        assert_eq!(play.landlords_team, vec![p1, p2]);
+
+        // Play the next trick, where the landlord will join the team, and then
+        // p2 will join the team (again).
+        play.play_cards(p1, &p1_hand[1..2]).unwrap();
+        play.play_cards(p2, &p2_hand[1..2]).unwrap();
+        play.play_cards(p3, &p3_hand[1..2]).unwrap();
+        play.play_cards(p4, &p4_hand[1..2]).unwrap();
+        play.play_cards(p5, &p5_hand[1..2]).unwrap();
+        play.play_cards(p6, &p6_hand[1..2]).unwrap();
+        play.play_cards(p7, &p7_hand[1..2]).unwrap();
+        play.play_cards(p8, &p8_hand[1..2]).unwrap();
+
+        // We don't get any joined-team messages, because both team-joiners have
+        // already joined.
+        let msgs = play.finish_trick().unwrap();
+        assert_eq!(
+            msgs.into_iter()
+                .filter(|m| match m {
+                    MessageVariant::JoinedTeam { .. } => true,
+                    _ => false,
+                })
+                .count(),
+            0
+        );
+
+        // Assert that the team didn't get any bigger
+        assert_eq!(play.landlords_team, vec![p1, p2]);
+        // But also that all of the friend cards have been played!
+        match play.game_mode {
+            GameMode::FindingFriends { ref friends, .. } => assert!(
+                friends.iter().all(|f| f.player_id.is_some()),
+                "all friends lots taken"
+            ),
+            _ => unreachable!(),
+        }
+
+        // Finish the game; we should see the landlord go up 4 levels (3 for
+        // keeping the opposing team at 0, and a bonus level)
+
+        let (new_init_phase, msgs) = play.finish_game().unwrap();
+        assert_eq!(
+            msgs.into_iter()
+                .filter(|m| match m {
+                    MessageVariant::BonusLevelEarned => true,
+                    MessageVariant::RankAdvanced { player, new_rank } if *player == p1 => {
+                        assert_eq!(*new_rank, Number::Jack);
+                        false
+                    }
+                    MessageVariant::RankAdvanced { player, new_rank } if *player == p2 => {
+                        assert_eq!(*new_rank, Number::Six);
+                        false
+                    }
+                    _ => false,
+                })
+                .count(),
+            1
+        );
+
+        assert_eq!(
+            new_init_phase
+                .propagated
+                .players
+                .into_iter()
+                .map(|p| p.level)
+                .collect::<Vec<Number>>(),
+            vec![
+                Number::Jack,
+                Number::Six,
+                Number::Two,
+                Number::Two,
+                Number::Two,
+                Number::Two,
+                Number::Two,
+                Number::Two
+            ],
+            "Check that propagated players have the right new levels"
+        );
     }
 }

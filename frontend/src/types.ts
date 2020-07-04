@@ -77,6 +77,7 @@ export interface IBid {
   id: number;
   card: string;
   count: number;
+  epoch: number;
 }
 
 export interface IDrawPhase {
@@ -102,6 +103,11 @@ export interface IExchangePhase {
   kitty_size: number;
   landlord: number;
   trump: ITrump;
+  autobid: IBid | null;
+  bids: IBid[];
+  epoch: number;
+  finalized: boolean;
+  exchanger: number | null;
 }
 
 export interface IPlayPhase {
@@ -133,6 +139,7 @@ export interface IPropagatedState {
   landlord: number | null;
   chat_link: string | null;
   advancement_policy: "Unrestricted" | "DefendPoints";
+  bonus_level_policy: "NoBonusLevel" | "BonusLevelForSmallerLandlordTeam";
   kitty_penalty: "Times" | "Power";
   kitty_bid_policy: "FirstCard" | "FirstCardOfLevelOrHighest";
   throw_penalty: "None" | "TenPointsPerAttempt";
@@ -140,6 +147,9 @@ export interface IPropagatedState {
   throw_evaluation_policy: "All" | "Highest";
   hide_played_cards: boolean;
   landlord_emoji: string | null;
+  play_takeback_policy: "AllowPlayTakeback" | "NoPlayTakeback";
+  bid_takeback_policy: "AllowBidTakeback" | "NoBidTakeback";
+  kitty_theft_policy: "AllowKittyTheft" | "NoKittyTheft";
 }
 
 export interface IHands {

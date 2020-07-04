@@ -8,7 +8,7 @@ I figured an online version would be worthwhile.
 # Usage:
 
 ```
-cargo run
+cd frontend && yarn build && cd .. && cd backend && cargo run
 ```
 
 The server is a self-contained static binary and does not terminate TLS. It
@@ -46,14 +46,25 @@ yarn prettier --write
 To run tslint:
 
 ```
-yarn lint
+cd frontend && yarn lint
+```
+
+And clippy:
+```
+cargo clippy
 ```
 
 ## Tests
 To run tests:
 
+### Frontend:
 ```
-yarn test
+cd frontend && yarn test
+```
+
+### Backend:
+```
+cargo test
 ```
 
 # Technical details

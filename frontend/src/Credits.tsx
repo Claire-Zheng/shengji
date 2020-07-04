@@ -29,6 +29,25 @@ const ChangeLog = (): JSX.Element => {
         style={{ content: contentStyle }}
       >
         <h2>Change Log</h2>
+        <p>7/02/2020:</p>
+        <ul>
+          <li>(#171) Add game option disable taking back bids</li>
+          <li>(#68) Add game option disable taking back plays</li>
+          <li>
+            (#17) Add game option for &ldquo;stealing&rdquo; the bottom cards
+          </li>
+        </ul>
+        <p>7/01/2020:</p>
+        <ul>
+          <li>Add the option to use SVG cards rather than text cards.</li>
+        </ul>
+        <p>6/28/2020:</p>
+        <ul>
+          <li>
+            (#163) add game option to reward a bonus level for landlord team to
+            win with a smaller size team
+          </li>
+        </ul>
         <p>6/26/2020:</p>
         <ul>
           <li>(#160) add game option to allow outbid only with more cards</li>
